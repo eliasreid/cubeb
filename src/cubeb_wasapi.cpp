@@ -2031,7 +2031,6 @@ initialize_iaudioclient2(com_ptr<IAudioClient> & audio_client)
   return CUBEB_OK;
 }
 
-#if 0
 bool
 initialize_iaudioclient3(com_ptr<IAudioClient> & audio_client,
                          cubeb_stream * stm,
@@ -2142,7 +2141,6 @@ initialize_iaudioclient3(com_ptr<IAudioClient> & audio_client,
   LOG("Could not initialize shared stream with IAudioClient3: error: %lx", hr);
   return false;
 }
-#endif
 
 #define DIRECTION_NAME (direction == eCapture ? "capture" : "render")
 
@@ -2165,6 +2163,10 @@ setup_wasapi_stream_one_side(cubeb_stream * stm,
     LOG("Loopback pref can only be used with capture streams!\n");
     return CUBEB_ERROR;
   }
+
+  // IAudioClient3 has problems with capture sessions:
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=1590902
+  const bool has_capture = direction == eCapture || direction == eAll;
 
   stm->stream_reset_lock.assert_current_thread_owns();
   // If user doesn't specify a particular device, we can choose another one when
@@ -2202,17 +2204,20 @@ setup_wasapi_stream_one_side(cubeb_stream * stm,
 
     /* Get a client. We will get all other interfaces we need from
      * this pointer. */
-#if 0 // See https://bugzilla.mozilla.org/show_bug.cgi?id=1590902
-    hr = device->Activate(__uuidof(IAudioClient3),
-                          CLSCTX_INPROC_SERVER,
-                          NULL, audio_client.receive_vpp());
-    if (hr == E_NOINTERFACE) {
-#endif
-    hr = device->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, NULL,
-                          audio_client.receive_vpp());
-#if 0
+
+    if (!has_capture)
+    {
+      hr = device->Activate(__uuidof(IAudioClient3),
+                            CLSCTX_INPROC_SERVER,
+                            nullptr, audio_client.receive_vpp());
     }
-#endif
+
+    if (has_capture || hr == E_NOINTERFACE) {
+      hr = device->Activate(__uuidof(IAudioClient),
+                            CLSCTX_INPROC_SERVER,
+                            nullptr, audio_client.receive_vpp());
+    }
+
 
     if (FAILED(hr)) {
       LOG("Could not activate the device to get an audio"
@@ -2341,16 +2346,13 @@ setup_wasapi_stream_one_side(cubeb_stream * stm,
     }
   }
 
-#if 0 // See https://bugzilla.mozilla.org/show_bug.cgi?id=1590902
-  if (initialize_iaudioclient3(audio_client, stm, mix_format, flags, direction)) {
+  if (!has_capture && initialize_iaudioclient3(audio_client, stm, mix_format, flags, direction)) {
     LOG("Initialized with IAudioClient3");
   } else {
-#endif
   hr = audio_client->Initialize(AUDCLNT_SHAREMODE_SHARED, flags, latency_hns, 0,
                                 mix_format.get(), NULL);
-#if 0
   }
-#endif
+
   if (FAILED(hr)) {
     LOG("Unable to initialize audio client for %s: %lx.", DIRECTION_NAME, hr);
     return CUBEB_ERROR;
